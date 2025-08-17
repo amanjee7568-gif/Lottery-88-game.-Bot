@@ -28,7 +28,7 @@ CASHFREE_APP_ID = "104929343d4e4107a5ca08529a03929401"
 CASHFREE_SECRET_KEY = "cfsk_ma_prod_a25900faa3d8666dc9f3813051da2ab3_da582824"
 CASHFREE_WEBHOOK_SECRET = "wzfmcpjtz6na7czj64dd"
 WEBHOOK_URL = "https://lottery-88-game-bot.onrender.com/telegram"
-PORT = 10000
+PORT = int(os.environ.get('PORT', 10000))
 
 # Initialize bot and app
 bot = telebot.TeleBot(BOT_TOKEN)
