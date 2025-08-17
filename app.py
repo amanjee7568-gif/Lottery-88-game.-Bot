@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Bot Credentials (Inbuilt)
+# Bot Credentials (Inbuilt - Not visible to users)
 BOT_TOKEN = "7566709441:AAE9A9V-Z9Q0vAQr2qyaBCBv0zpRyU3Akcw"
 ADMIN_ID = 6646320334
 ADMIN_PHONE = "9234906001"
@@ -57,7 +57,8 @@ def init_db():
         created_at TEXT,
         last_activity TEXT,
         is_monetized BOOLEAN DEFAULT 0,
-        monetization_request TEXT
+        monetization_request TEXT,
+        auto_optimize BOOLEAN DEFAULT 1
     )
     ''')
     
@@ -126,6 +127,21 @@ def init_db():
     )
     ''')
     
+    # Monetization requests
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS monetization_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        channel_id TEXT,
+        channel_name TEXT,
+        members INTEGER,
+        status TEXT DEFAULT 'pending',
+        payment_amount INTEGER,
+        payment_status TEXT DEFAULT 'pending',
+        created_at TEXT
+    )
+    ''')
+    
     conn.commit()
     conn.close()
 
@@ -175,6 +191,45 @@ def send_otp(phone, otp):
     # For demo purposes, we'll just log it
     logging.info(f"OTP sent to {phone}: {otp}")
 
+def optimize_user_activity(user_id):
+    """Automatically optimize user activity for maximum revenue"""
+    user = get_user(user_id)
+    if not user:
+        return
+    
+    conn = sqlite3.connect('ultimate_bot.db')
+    cursor = conn.cursor()
+    
+    # Check if user is active and likely to spend
+    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ? AND played_at > ?", 
+                 (user_id, (datetime.now() - timedelta(days=7)).isoformat()))
+    recent_games = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT SUM(bet_amount) FROM games WHERE user_id = ? AND played_at > ?", 
+                 (user_id, (datetime.now() - timedelta(days=7)).isoformat()))
+    total_bet = cursor.fetchone()[0] or 0
+    
+    conn.close()
+    
+    # If user is active but not premium, encourage premium
+    if recent_games >= 5 and total_bet >= 500 and not user[7]:
+        bot.send_message(user_id, 
+                         "🎉 You're an active player! Upgrade to Premium for:\n"
+                         "✅ Higher winning chances\n"
+                         "✅ Exclusive bonuses\n"
+                         "✅ Job opportunities\n"
+                         "✅ Board results\n"
+                         "💎 Upgrade now for just ₹299/month!")
+    
+    # If user is premium and very active, offer special deals
+    if user[7] and recent_games >= 10 and total_bet >= 1000:
+        bot.send_message(user_id, 
+                         "🎉 Special offer for our VIP player!\n"
+                         "✅ Double bonus on next deposit\n"
+                         "✅ Exclusive access to new games\n"
+                         "✅ Personal account manager\n"
+                         "💎 Contact admin for details!")
+
 # Authentication System
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -202,6 +257,8 @@ def start(message):
                          reply_markup=auth_keyboard)
     else:
         main_menu(message)
+        # Optimize user activity
+        optimize_user_activity(user_id)
 
 @bot.message_handler(content_types=['contact'])
 def handle_contact(message):
@@ -338,8 +395,13 @@ def place_bet(call):
         bot.edit_message_text(msg, call.message.chat.id, call.message.message_id)
         time.sleep(0.5)
     
-    # Generate random result
-    win = random.choice([True, False])
+    # Generate random result with optimization
+    user = get_user(user_id)
+    if user[7]:  # Premium user has higher chances
+        win = random.choice([True, True, False])  # 66% win rate
+    else:
+        win = random.choice([True, False, False])  # 33% win rate
+    
     if win:
         win_amount = bet_amount * 2
         update_wallet(user_id, win_amount)
@@ -483,6 +545,86 @@ def results_menu(message):
     
     bot.send_message(user_id, results_text, parse_mode="Markdown")
 
+# My Stats
+@bot.message_handler(func=lambda message: message.text == "📈 My Stats")
+def my_stats(message):
+    user_id = message.from_user.id
+    user = get_user(user_id)
+    
+    conn = sqlite3.connect('ultimate_bot.db')
+    cursor = conn.cursor()
+    
+    # Get game statistics
+    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ?", (user_id,))
+    total_games = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ? AND result = 'win'", (user_id,))
+    wins = cursor.fetchone()[0]
+    
+    cursor.execute("SELECT SUM(bet_amount) FROM games WHERE user_id = ?", (user_id,))
+    total_bet = cursor.fetchone()[0] or 0
+    
+    cursor.execute("SELECT SUM(win_amount) FROM games WHERE user_id = ? AND result = 'win'", (user_id,))
+    total_win = cursor.fetchone()[0] or 0
+    
+    # Get referral count
+    cursor.execute("SELECT COUNT(*) FROM users WHERE referred_by = ?", (user_id,))
+    referrals = cursor.fetchone()[0]
+    
+    conn.close()
+    
+    stats_text = f"📈 Your Statistics\n\n"
+    stats_text += f"🎮 Games Played: {total_games}\n"
+    stats_text += f"🏆 Games Won: {wins}\n"
+    stats_text += f"📊 Win Rate: {(wins/total_games*100):.1f}%\n" if total_games > 0 else "📊 Win Rate: 0%\n"
+    stats_text += f"💰 Total Bet: ₹{total_bet}\n"
+    stats_text += f"💸 Total Win: ₹{total_win}\n"
+    stats_text += f"🎁 Referrals: {referrals}\n"
+    
+    bot.send_message(user_id, stats_text)
+
+# Help Section
+@bot.message_handler(func=lambda message: message.text == "ℹ️ Help")
+def help_menu(message):
+    help_text = """
+    ℹ️ Help & Support
+    
+    🤖 How to use the bot:
+    1. Register with your phone number
+    2. Add money to your wallet
+    3. Upgrade to premium for full access
+    4. Play games and earn money
+    
+    💎 Premium Benefits:
+    - Access to all casino games
+    - Higher winning chances
+    - Job vacancies
+    - Board results
+    - Monetization options
+    
+    💳 Payment Options:
+    - UPI: 9234906001@ptyes
+    - Minimum deposit: ₹100
+    - Minimum withdrawal: ₹500
+    
+    📞 Support:
+    - Contact: @amanjee7568
+    - Email: rinatrevelsagancypvtltd@gmail.com
+    
+    🎮 Games:
+    - Slots
+    - Dragon Tiger
+    - Card Games
+    - Dice
+    
+    💡 Tips:
+    - Refer friends to earn bonuses
+    - Play regularly for special offers
+    - Premium users get better rewards
+    """
+    
+    bot.send_message(message.chat.id, help_text)
+
 # Admin Panel
 @bot.message_handler(func=lambda message: message.text == "🛡️ Admin Panel")
 def admin_panel(message):
@@ -500,7 +642,8 @@ def admin_panel(message):
         types.InlineKeyboardButton("💼 Add Job", callback_data="admin_add_job"),
         types.InlineKeyboardButton("📊 Add Result", callback_data="admin_add_result"),
         types.InlineKeyboardButton("💸 Approve Withdraw", callback_data="admin_withdraw"),
-        types.InlineKeyboardButton("🎚️ Edit Bot", callback_data="admin_edit_bot")
+        types.InlineKeyboardButton("🎚️ Edit Bot", callback_data="admin_edit_bot"),
+        types.InlineKeyboardButton("📈 Monetization", callback_data="admin_monetization")
     )
     
     bot.send_message(user_id, "🛡️ Admin Panel", reply_markup=keyboard)
@@ -556,6 +699,12 @@ def admin_callback(call):
         cursor.execute("SELECT SUM(premium_wallet) FROM users")
         total_premium_wallet = cursor.fetchone()[0] or 0
         
+        cursor.execute("SELECT COUNT(*) FROM games")
+        total_games = cursor.fetchone()[0]
+        
+        cursor.execute("SELECT SUM(bet_amount) FROM games")
+        total_bets = cursor.fetchone()[0] or 0
+        
         conn.close()
         
         stats_text = f"📊 Bot Statistics\n\n"
@@ -563,6 +712,8 @@ def admin_callback(call):
         stats_text += f"⭐ Premium Users: {premium_users}\n"
         stats_text += f"💰 Total Game Wallet: ₹{total_game_wallet}\n"
         stats_text += f"💎 Total Premium Wallet: ₹{total_premium_wallet}\n"
+        stats_text += f"🎮 Total Games: {total_games}\n"
+        stats_text += f"💸 Total Bets: ₹{total_bets}\n"
         
         bot.edit_message_text(stats_text, call.message.chat.id, call.message.message_id)
     
@@ -595,6 +746,26 @@ def admin_callback(call):
     elif action == "edit_bot":
         msg = bot.send_message(user_id, "🎚️ Enter the feature you want to edit:")
         bot.register_next_step_handler(msg, edit_bot_feature)
+    
+    elif action == "monetization":
+        # Show monetization requests
+        conn = sqlite3.connect('ultimate_bot.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM monetization_requests WHERE status = 'pending'")
+        requests = cursor.fetchall()
+        conn.close()
+        
+        if not requests:
+            bot.edit_message_text("📈 No pending monetization requests", call.message.chat.id, call.message.message_id)
+            return
+        
+        req_text = "📈 Pending Monetization Requests:\n\n"
+        for req in requests:
+            req_text += f"🆔 {req[0]} - User {req[1]}\n"
+            req_text += f"📢 Channel: {req[3]} ({req[4]} members)\n"
+            req_text += f"💰 Payment: ₹{req[6]} ({req[7]})\n\n"
+        
+        bot.edit_message_text(req_text, call.message.chat.id, call.message.message_id)
 
 # Helper functions for admin actions
 def broadcast_message(message):
@@ -681,6 +852,46 @@ def telegram_webhook():
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({"status": "Bot is running!"})
+
+# Cashfree webhook handler
+@app.route('/cashfree-webhook', methods=['POST'])
+def cashfree_webhook():
+    try:
+        # Verify webhook signature
+        signature = request.headers.get('x-webhook-signature', '')
+        body = request.get_data(as_text=True)
+        
+        expected_signature = hmac.new(
+            CASHFREE_WEBHOOK_SECRET.encode(),
+            msg=body.encode(),
+            digestmod=hashlib.sha256
+        ).hexdigest()
+        
+        if not hmac.compare_digest(signature, expected_signature):
+            return 'Invalid signature', 401
+        
+        # Process webhook data
+        data = request.json
+        event_type = data.get('event')
+        
+        if event_type == 'payment.success':
+            order_id = data.get('data', {}).get('order', {}).get('order_id')
+            amount = data.get('data', {}).get('order', {}).get('order_amount')
+            
+            # Find and update payment
+            conn = sqlite3.connect('ultimate_bot.db')
+            cursor = conn.cursor()
+            cursor.execute("UPDATE transactions SET status = 'approved' WHERE id = ?", (order_id,))
+            conn.commit()
+            conn.close()
+            
+            # Credit user's wallet
+            # This would need to be implemented based on your payment flow
+            
+        return 'ok', 200
+    except Exception as e:
+        logging.error(f"Webhook error: {e}")
+        return 'error', 500
 
 # Set webhook on startup
 def set_webhook():
