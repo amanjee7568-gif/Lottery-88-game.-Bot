@@ -896,10 +896,27 @@ def cashfree_webhook():
 # Set webhook on startup
 def set_webhook():
     try:
+        # First, remove any existing webhook
+        bot.remove_webhook()
+        
+        # Set the new webhook
         bot.set_webhook(url=WEBHOOK_URL)
         logging.info(f"✅ Webhook set to: {WEBHOOK_URL}")
+        
+        # Verify webhook was set correctly
+        webhook_info = bot.get_webhook_info()
+        if webhook_info.url == WEBHOOK_URL:
+            logging.info("✅ Webhook verification successful")
+        else:
+            logging.error(f"❌ Webhook verification failed. Expected: {WEBHOOK_URL}, Got: {webhook_info.url}")
     except Exception as e:
         logging.error(f"❌ Webhook setup failed: {e}")
+
+# Reset webhook endpoint
+@app.route('/reset_webhook', methods=['GET'])
+def reset_webhook():
+    set_webhook()
+    return jsonify({"status": "Webhook reset successfully"})
 
 if __name__ == '__main__':
     set_webhook()
