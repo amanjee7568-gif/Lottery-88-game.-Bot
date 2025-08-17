@@ -34,6 +34,10 @@ PORT = int(os.environ.get('PORT', 10000))
 bot = telebot.TeleBot(BOT_TOKEN)
 app = Flask(__name__)
 
+# Setup logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Database setup
 def init_db():
     conn = sqlite3.connect('ultimate_bot.db')
@@ -59,86 +63,6 @@ def init_db():
         is_monetized BOOLEAN DEFAULT 0,
         monetization_request TEXT,
         auto_optimize BOOLEAN DEFAULT 1
-    )
-    ''')
-    
-    # Games table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS games (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        game_type TEXT,
-        bet_amount INTEGER,
-        result TEXT,
-        win_amount INTEGER,
-        played_at TEXT
-    )
-    ''')
-    
-    # Transactions table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS transactions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        type TEXT,
-        amount INTEGER,
-        status TEXT,
-        utr TEXT,
-        created_at TEXT
-    )
-    ''')
-    
-    # Admin logs
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS admin_logs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        admin_id INTEGER,
-        action TEXT,
-        target_user INTEGER,
-        details TEXT,
-        created_at TEXT
-    )
-    ''')
-    
-    # Jobs table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS jobs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT,
-        company TEXT,
-        type TEXT,
-        salary TEXT,
-        location TEXT,
-        description TEXT,
-        contact TEXT,
-        created_at TEXT
-    )
-    ''')
-    
-    # Results table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS results (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        board TEXT,
-        exam_type TEXT,
-        year TEXT,
-        result_link TEXT,
-        created_at TEXT
-    )
-    ''')
-    
-    # Monetization requests
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS monetization_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        channel_id TEXT,
-        channel_name TEXT,
-        members INTEGER,
-        status TEXT DEFAULT 'pending',
-        payment_amount INTEGER,
-        payment_status TEXT DEFAULT 'pending',
-        created_at TEXT
     )
     ''')
     
@@ -189,50 +113,13 @@ def generate_otp():
 def send_otp(phone, otp):
     # In a real implementation, you would use an SMS gateway
     # For demo purposes, we'll just log it
-    logging.info(f"OTP sent to {phone}: {otp}")
-
-def optimize_user_activity(user_id):
-    """Automatically optimize user activity for maximum revenue"""
-    user = get_user(user_id)
-    if not user:
-        return
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    
-    # Check if user is active and likely to spend
-    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ? AND played_at > ?", 
-                 (user_id, (datetime.now() - timedelta(days=7)).isoformat()))
-    recent_games = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT SUM(bet_amount) FROM games WHERE user_id = ? AND played_at > ?", 
-                 (user_id, (datetime.now() - timedelta(days=7)).isoformat()))
-    total_bet = cursor.fetchone()[0] or 0
-    
-    conn.close()
-    
-    # If user is active but not premium, encourage premium
-    if recent_games >= 5 and total_bet >= 500 and not user[7]:
-        bot.send_message(user_id, 
-                         "🎉 You're an active player! Upgrade to Premium for:\n"
-                         "✅ Higher winning chances\n"
-                         "✅ Exclusive bonuses\n"
-                         "✅ Job opportunities\n"
-                         "✅ Board results\n"
-                         "💎 Upgrade now for just ₹299/month!")
-    
-    # If user is premium and very active, offer special deals
-    if user[7] and recent_games >= 10 and total_bet >= 1000:
-        bot.send_message(user_id, 
-                         "🎉 Special offer for our VIP player!\n"
-                         "✅ Double bonus on next deposit\n"
-                         "✅ Exclusive access to new games\n"
-                         "✅ Personal account manager\n"
-                         "💎 Contact admin for details!")
+    logger.info(f"OTP sent to {phone}: {otp}")
 
 # Authentication System
 @bot.message_handler(commands=['start'])
 def start(message):
+    logger.info(f"Start command received from user {message.from_user.id}")
+    
     user_id = message.from_user.id
     user = get_user(user_id)
     
@@ -257,51 +144,6 @@ def start(message):
                          reply_markup=auth_keyboard)
     else:
         main_menu(message)
-        # Optimize user activity
-        optimize_user_activity(user_id)
-
-@bot.message_handler(content_types=['contact'])
-def handle_contact(message):
-    user_id = message.from_user.id
-    phone = message.contact.phone_number
-    
-    # Generate and send OTP
-    otp = generate_otp()
-    send_otp(phone, otp)
-    
-    # Update user with phone and OTP
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-    UPDATE users SET phone = ?, otp = ? WHERE user_id = ?
-    """, (phone, otp, user_id))
-    conn.commit()
-    conn.close()
-    
-    # Ask for OTP
-    msg = bot.send_message(user_id, "📱 We've sent an OTP to your phone.\n\nPlease enter the OTP:")
-    bot.register_next_step_handler(msg, verify_otp)
-
-def verify_otp(message):
-    user_id = message.from_user.id
-    otp_entered = message.text
-    
-    user = get_user(user_id)
-    if user and user[3] == otp_entered:  # OTP is at index 3
-        # Mark as verified
-        conn = sqlite3.connect('ultimate_bot.db')
-        cursor = conn.cursor()
-        cursor.execute("""
-        UPDATE users SET is_verified = 1, name = ? WHERE user_id = ?
-        """, (message.from_user.first_name, user_id))
-        conn.commit()
-        conn.close()
-        
-        bot.send_message(user_id, "✅ Verification successful!\n\nWelcome to the main menu.")
-        main_menu(message)
-    else:
-        msg = bot.send_message(user_id, "❌ Invalid OTP. Please try again:")
-        bot.register_next_step_handler(msg, verify_otp)
 
 # Main Menu
 def main_menu(message):
@@ -333,590 +175,58 @@ def main_menu(message):
                      f"Premium: {'✅' if user[7] else '❌'}",
                      reply_markup=keyboard)
 
-# Casino Games with Animations
-@bot.message_handler(func=lambda message: message.text == "🎰 Casino Games")
-def casino_games(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    if not user[7]:  # Not premium
-        bot.send_message(user_id, "🎰 Casino games are available for premium users only!\n\nUpgrade to premium to unlock all games.")
-        return
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    games = [
-        ("🎰 Slots", "slots"),
-        ("🐉 Dragon Tiger", "dragon_tiger"),
-        ("🃏 Card Games", "card_games"),
-        ("🎲 Dice", "dice")
-    ]
-    
-    for text, callback in games:
-        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
-    
-    bot.send_message(user_id, "🎰 Choose a game:", reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: call.data in ['slots', 'dragon_tiger', 'card_games', 'dice'])
-def play_game(call):
-    user_id = call.from_user.id
-    game_type = call.data
-    
-    # Show betting interface with animation
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("Place Bet", callback_data=f"bet_{game_type}"))
-    
-    bot.edit_message_text(f"🎰 {game_type.replace('_', ' ').title()}\n\nCurrent bet: ₹10\n\n"
-                         "🎮 Adjust your bet using the buttons below:", 
-                         call.message.chat.id, call.message.message_id, reply_markup=keyboard)
-
-@bot.callback_query_handler(func=lambda call: call.data.startswith('bet_'))
-def place_bet(call):
-    user_id = call.from_user.id
-    game_type = call.data.split('_')[1]
-    bet_amount = 10  # Default bet
-    
-    user = get_user(user_id)
-    if user[4] < bet_amount:
-        bot.answer_callback_query(call.id, "Insufficient balance in game wallet!")
-        return
-    
-    # Deduct bet amount
-    update_wallet(user_id, -bet_amount)
-    
-    # Show animation
-    animation_messages = {
-        'slots': ["🎰 Spinning...", "🎰 Spinning..", "🎰 Spinning."],
-        'dragon_tiger': ["🐉 Dealing cards...", "🐉 Dealing cards..", "🐉 Dealing cards."],
-        'card_games': ["🃏 Shuffling cards...", "🃏 Shuffling cards..", "🃏 Shuffling cards."],
-        'dice': ["🎲 Rolling dice...", "🎲 Rolling dice..", "🎲 Rolling dice."]
-    }
-    
-    for msg in animation_messages[game_type]:
-        bot.edit_message_text(msg, call.message.chat.id, call.message.message_id)
-        time.sleep(0.5)
-    
-    # Generate random result with optimization
-    user = get_user(user_id)
-    if user[7]:  # Premium user has higher chances
-        win = random.choice([True, True, False])  # 66% win rate
-    else:
-        win = random.choice([True, False, False])  # 33% win rate
-    
-    if win:
-        win_amount = bet_amount * 2
-        update_wallet(user_id, win_amount)
-        result_text = f"🎉 You won ₹{win_amount}!"
-    else:
-        result_text = f"😢 You lost ₹{bet_amount}."
-    
-    # Record game
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO games (user_id, game_type, bet_amount, result, win_amount, played_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-    """, (user_id, game_type, bet_amount, "win" if win else "lose", win_amount if win else 0, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-    
-    bot.edit_message_text(f"🎰 {game_type.replace('_', ' ').title()}\n\n{result_text}", 
-                         call.message.chat.id, call.message.message_id)
-
-# Wallet Management
-@bot.message_handler(func=lambda message: message.text == "👛 Wallet")
-def wallet_menu(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("➕ Add Money", callback_data="add_money"),
-        types.InlineKeyboardButton("💸 Withdraw", callback_data="withdraw"),
-        types.InlineKeyboardButton("🔄 Transfer", callback_data="transfer"),
-        types.InlineKeyboardButton("📊 History", callback_data="history")
-    )
-    
-    bot.send_message(user_id, 
-                     f"👛 Wallet\n\n"
-                     f"Game Wallet: ₹{user[4]} (Code: {user[6]})\n"
-                     f"Premium Wallet: ₹{user[5]} (Code: {user[7]})",
-                     reply_markup=keyboard)
-
-# Premium Features
-@bot.message_handler(func=lambda message: message.text == "💎 Premium")
-def premium_menu(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    if user[7]:
-        bot.send_message(user_id, 
-                         "💎 Premium Features:\n\n"
-                         "✅ Access to all casino games\n"
-                         "✅ Higher winning chances\n"
-                         "✅ Exclusive bonuses\n"
-                         "✅ Priority support\n"
-                         "✅ Job vacancies\n"
-                         "✅ Board results & news\n"
-                         "✅ Monetization options")
-    else:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("Upgrade to Premium", callback_data="upgrade_premium"))
-        
-        bot.send_message(user_id, 
-                         "💎 Upgrade to Premium to unlock:\n\n"
-                         "✅ All casino games\n"
-                         "✅ Higher winning chances\n"
-                         "✅ Exclusive bonuses\n"
-                         "✅ Priority support\n"
-                         "✅ Job vacancies\n"
-                         "✅ Board results & news\n"
-                         "✅ Monetization options\n\n"
-                         "Price: ₹299/month",
-                         reply_markup=keyboard)
-
-# Referral System
-@bot.message_handler(func=lambda message: message.text == "🎁 Referral")
-def referral_menu(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    referral_link = f"https://t.me/{bot.get_me().username}?start={user_id}"
-    
-    bot.send_message(user_id, 
-                     f"🎁 Referral Program\n\n"
-                     f"Your referral link: {referral_link}\n\n"
-                     f"Refer friends and earn ₹20 for each referral!\n"
-                     f"Your friend also gets ₹20 bonus!\n\n"
-                     f"Total referrals: {user[10] if user[10] else 0}")
-
-# Jobs Section
-@bot.message_handler(func=lambda message: message.text == "💼 Jobs")
-def jobs_menu(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    if not user[7]:  # Not premium
-        bot.send_message(user_id, "💼 Job vacancies are available for premium users only!\n\nUpgrade to premium to unlock this feature.")
-        return
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM jobs ORDER BY created_at DESC LIMIT 5")
-    jobs = cursor.fetchall()
-    conn.close()
-    
-    if not jobs:
-        bot.send_message(user_id, "💼 No job vacancies available at the moment.")
-        return
-    
-    jobs_text = "💼 Latest Job Vacancies:\n\n"
-    for job in jobs:
-        jobs_text += f"📌 {job[1]} at {job[2]}\n"
-        jobs_text += f"💰 Salary: {job[4]}\n"
-        jobs_text += f"📍 Location: {job[5]}\n"
-        jobs_text += f"📞 Contact: {job[7]}\n\n"
-    
-    bot.send_message(user_id, jobs_text)
-
-# Results Section
-@bot.message_handler(func=lambda message: message.text == "📊 Results")
-def results_menu(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    if not user[7]:  # Not premium
-        bot.send_message(user_id, "📊 Results are available for premium users only!\n\nUpgrade to premium to unlock this feature.")
-        return
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM results ORDER BY created_at DESC LIMIT 5")
-    results = cursor.fetchall()
-    conn.close()
-    
-    if not results:
-        bot.send_message(user_id, "📊 No results available at the moment.")
-        return
-    
-    results_text = "📊 Latest Results:\n\n"
-    for result in results:
-        results_text += f"📌 {result[1]} {result[2]} {result[3]}\n"
-        results_text += f"🔗 [View Result]({result[4]})\n\n"
-    
-    bot.send_message(user_id, results_text, parse_mode="Markdown")
-
-# My Stats
-@bot.message_handler(func=lambda message: message.text == "📈 My Stats")
-def my_stats(message):
-    user_id = message.from_user.id
-    user = get_user(user_id)
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    
-    # Get game statistics
-    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ?", (user_id,))
-    total_games = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT COUNT(*) FROM games WHERE user_id = ? AND result = 'win'", (user_id,))
-    wins = cursor.fetchone()[0]
-    
-    cursor.execute("SELECT SUM(bet_amount) FROM games WHERE user_id = ?", (user_id,))
-    total_bet = cursor.fetchone()[0] or 0
-    
-    cursor.execute("SELECT SUM(win_amount) FROM games WHERE user_id = ? AND result = 'win'", (user_id,))
-    total_win = cursor.fetchone()[0] or 0
-    
-    # Get referral count
-    cursor.execute("SELECT COUNT(*) FROM users WHERE referred_by = ?", (user_id,))
-    referrals = cursor.fetchone()[0]
-    
-    conn.close()
-    
-    stats_text = f"📈 Your Statistics\n\n"
-    stats_text += f"🎮 Games Played: {total_games}\n"
-    stats_text += f"🏆 Games Won: {wins}\n"
-    stats_text += f"📊 Win Rate: {(wins/total_games*100):.1f}%\n" if total_games > 0 else "📊 Win Rate: 0%\n"
-    stats_text += f"💰 Total Bet: ₹{total_bet}\n"
-    stats_text += f"💸 Total Win: ₹{total_win}\n"
-    stats_text += f"🎁 Referrals: {referrals}\n"
-    
-    bot.send_message(user_id, stats_text)
-
-# Help Section
-@bot.message_handler(func=lambda message: message.text == "ℹ️ Help")
-def help_menu(message):
-    help_text = """
-    ℹ️ Help & Support
-    
-    🤖 How to use the bot:
-    1. Register with your phone number
-    2. Add money to your wallet
-    3. Upgrade to premium for full access
-    4. Play games and earn money
-    
-    💎 Premium Benefits:
-    - Access to all casino games
-    - Higher winning chances
-    - Job vacancies
-    - Board results
-    - Monetization options
-    
-    💳 Payment Options:
-    - UPI: 9234906001@ptyes
-    - Minimum deposit: ₹100
-    - Minimum withdrawal: ₹500
-    
-    📞 Support:
-    - Contact: @amanjee7568
-    - Email: rinatrevelsagancypvtltd@gmail.com
-    
-    🎮 Games:
-    - Slots
-    - Dragon Tiger
-    - Card Games
-    - Dice
-    
-    💡 Tips:
-    - Refer friends to earn bonuses
-    - Play regularly for special offers
-    - Premium users get better rewards
-    """
-    
-    bot.send_message(message.chat.id, help_text)
-
-# Admin Panel
-@bot.message_handler(func=lambda message: message.text == "🛡️ Admin Panel")
-def admin_panel(message):
-    user_id = message.from_user.id
-    if user_id != ADMIN_ID:
-        bot.send_message(user_id, "🚫 Access denied!")
-        return
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(
-        types.InlineKeyboardButton("👥 Manage Users", callback_data="admin_users"),
-        types.InlineKeyboardButton("💰 Manage Wallets", callback_data="admin_wallets"),
-        types.InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast"),
-        types.InlineKeyboardButton("📊 Statistics", callback_data="admin_stats"),
-        types.InlineKeyboardButton("💼 Add Job", callback_data="admin_add_job"),
-        types.InlineKeyboardButton("📊 Add Result", callback_data="admin_add_result"),
-        types.InlineKeyboardButton("💸 Approve Withdraw", callback_data="admin_withdraw"),
-        types.InlineKeyboardButton("🎚️ Edit Bot", callback_data="admin_edit_bot"),
-        types.InlineKeyboardButton("📈 Monetization", callback_data="admin_monetization")
-    )
-    
-    bot.send_message(user_id, "🛡️ Admin Panel", reply_markup=keyboard)
-
-# Callback handlers for admin panel
-@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
-def admin_callback(call):
-    user_id = call.from_user.id
-    if user_id != ADMIN_ID:
-        bot.answer_callback_query(call.id, "Access denied!")
-        return
-    
-    action = call.data.split('_')[1]
-    
-    if action == "users":
-        # Show user management options
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("➕ Add Balance", callback_data="admin_add_balance"))
-        keyboard.add(types.InlineKeyboardButton("➖ Remove Balance", callback_data="admin_remove_balance"))
-        keyboard.add(types.InlineKeyboardButton("⭐ Make Premium", callback_data="admin_make_premium"))
-        keyboard.add(types.InlineKeyboardButton("❌ Remove Premium", callback_data="admin_remove_premium"))
-        
-        bot.edit_message_text("👥 User Management", call.message.chat.id, call.message.message_id, reply_markup=keyboard)
-    
-    elif action == "wallets":
-        # Show wallet management options
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("🔄 Game to Premium", callback_data="admin_game_to_premium"))
-        keyboard.add(types.InlineKeyboardButton("🔄 Premium to Game", callback_data="admin_premium_to_game"))
-        keyboard.add(types.InlineKeyboardButton("💸 Game to Bank", callback_data="admin_game_to_bank"))
-        keyboard.add(types.InlineKeyboardButton("💸 Premium to Bank", callback_data="admin_premium_to_bank"))
-        
-        bot.edit_message_text("💰 Wallet Management", call.message.chat.id, call.message.message_id, reply_markup=keyboard)
-    
-    elif action == "broadcast":
-        msg = bot.send_message(user_id, "📢 Enter the message to broadcast to all users:")
-        bot.register_next_step_handler(msg, broadcast_message)
-    
-    elif action == "stats":
-        # Show statistics
-        conn = sqlite3.connect('ultimate_bot.db')
-        cursor = conn.cursor()
-        
-        cursor.execute("SELECT COUNT(*) FROM users")
-        total_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT COUNT(*) FROM users WHERE is_premium = 1")
-        premium_users = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT SUM(game_wallet) FROM users")
-        total_game_wallet = cursor.fetchone()[0] or 0
-        
-        cursor.execute("SELECT SUM(premium_wallet) FROM users")
-        total_premium_wallet = cursor.fetchone()[0] or 0
-        
-        cursor.execute("SELECT COUNT(*) FROM games")
-        total_games = cursor.fetchone()[0]
-        
-        cursor.execute("SELECT SUM(bet_amount) FROM games")
-        total_bets = cursor.fetchone()[0] or 0
-        
-        conn.close()
-        
-        stats_text = f"📊 Bot Statistics\n\n"
-        stats_text += f"👥 Total Users: {total_users}\n"
-        stats_text += f"⭐ Premium Users: {premium_users}\n"
-        stats_text += f"💰 Total Game Wallet: ₹{total_game_wallet}\n"
-        stats_text += f"💎 Total Premium Wallet: ₹{total_premium_wallet}\n"
-        stats_text += f"🎮 Total Games: {total_games}\n"
-        stats_text += f"💸 Total Bets: ₹{total_bets}\n"
-        
-        bot.edit_message_text(stats_text, call.message.chat.id, call.message.message_id)
-    
-    elif action == "add_job":
-        msg = bot.send_message(user_id, "💼 Enter job details in format:\nTitle|Company|Type|Salary|Location|Description|Contact")
-        bot.register_next_step_handler(msg, add_job)
-    
-    elif action == "add_result":
-        msg = bot.send_message(user_id, "📊 Enter result details in format:\nBoard|Exam Type|Year|Result Link")
-        bot.register_next_step_handler(msg, add_result)
-    
-    elif action == "withdraw":
-        # Show pending withdrawals
-        conn = sqlite3.connect('ultimate_bot.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM transactions WHERE type = 'withdraw' AND status = 'pending'")
-        withdrawals = cursor.fetchall()
-        conn.close()
-        
-        if not withdrawals:
-            bot.edit_message_text("💸 No pending withdrawals", call.message.chat.id, call.message.message_id)
-            return
-        
-        withdraw_text = "💸 Pending Withdrawals:\n\n"
-        for withdrawal in withdrawals:
-            withdraw_text += f"🆔 {withdrawal[0]} - User {withdrawal[1]} - ₹{withdrawal[2]}\n"
-        
-        bot.edit_message_text(withdraw_text, call.message.chat.id, call.message.message_id)
-    
-    elif action == "edit_bot":
-        msg = bot.send_message(user_id, "🎚️ Enter the feature you want to edit:")
-        bot.register_next_step_handler(msg, edit_bot_feature)
-    
-    elif action == "monetization":
-        # Show monetization requests
-        conn = sqlite3.connect('ultimate_bot.db')
-        cursor = conn.cursor()
-        cursor.execute("SELECT * FROM monetization_requests WHERE status = 'pending'")
-        requests = cursor.fetchall()
-        conn.close()
-        
-        if not requests:
-            bot.edit_message_text("📈 No pending monetization requests", call.message.chat.id, call.message.message_id)
-            return
-        
-        req_text = "📈 Pending Monetization Requests:\n\n"
-        for req in requests:
-            req_text += f"🆔 {req[0]} - User {req[1]}\n"
-            req_text += f"📢 Channel: {req[3]} ({req[4]} members)\n"
-            req_text += f"💰 Payment: ₹{req[6]} ({req[7]})\n\n"
-        
-        bot.edit_message_text(req_text, call.message.chat.id, call.message.message_id)
-
-# Helper functions for admin actions
-def broadcast_message(message):
-    user_id = message.from_user.id
-    broadcast_text = message.text
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("SELECT user_id FROM users")
-    users = cursor.fetchall()
-    conn.close()
-    
-    sent_count = 0
-    for user in users:
-        try:
-            bot.send_message(user[0], f"📢 Broadcast from Admin:\n\n{broadcast_text}")
-            sent_count += 1
-        except:
-            pass
-    
-    bot.send_message(user_id, f"✅ Broadcast sent to {sent_count} users!")
-
-def add_job(message):
-    user_id = message.from_user.id
-    job_details = message.text.split('|')
-    
-    if len(job_details) != 7:
-        bot.send_message(user_id, "❌ Invalid format! Please use: Title|Company|Type|Salary|Location|Description|Contact")
-        return
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO jobs (title, company, type, salary, location, description, contact, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    """, (job_details[0].strip(), job_details[1].strip(), job_details[2].strip(), 
-          job_details[3].strip(), job_details[4].strip(), job_details[5].strip(), 
-          job_details[6].strip(), datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-    
-    bot.send_message(user_id, "✅ Job added successfully!")
-
-def add_result(message):
-    user_id = message.from_user.id
-    result_details = message.text.split('|')
-    
-    if len(result_details) != 4:
-        bot.send_message(user_id, "❌ Invalid format! Please use: Board|Exam Type|Year|Result Link")
-        return
-    
-    conn = sqlite3.connect('ultimate_bot.db')
-    cursor = conn.cursor()
-    cursor.execute("""
-    INSERT INTO results (board, exam_type, year, result_link, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    """, (result_details[0].strip(), result_details[1].strip(), 
-          result_details[2].strip(), result_details[3].strip(), 
-          datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
-    
-    bot.send_message(user_id, "✅ Result added successfully!")
-
-def edit_bot_feature(message):
-    user_id = message.from_user.id
-    feature = message.text
-    
-    # This is a placeholder for bot feature editing
-    # In a real implementation, you would have a more complex system
-    bot.send_message(user_id, f"🎚️ Editing feature: {feature}\n\nFeature updated successfully!")
-
 # Webhook handler
 @app.route('/telegram', methods=['POST'])
 def telegram_webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_str = request.get_data(as_text=True)
-        update = telebot.types.Update.de_json(json_str)
-        bot.process_new_updates([update])
-        return jsonify({"status": "ok"})
-    return jsonify({"error": "Invalid request"}), 400
+    try:
+        logger.info("Webhook received")
+        if request.headers.get('content-type') == 'application/json':
+            json_str = request.get_data(as_text=True)
+            logger.info(f"Webhook data: {json_str}")
+            update = telebot.types.Update.de_json(json_str)
+            bot.process_new_updates([update])
+            return jsonify({"status": "ok"})
+        else:
+            logger.error("Invalid content type")
+            return jsonify({"error": "Invalid request"}), 400
+    except Exception as e:
+        logger.error(f"Webhook error: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # Health check endpoint
 @app.route('/', methods=['GET'])
 def health_check():
     return jsonify({"status": "Bot is running!"})
 
-# Cashfree webhook handler
-@app.route('/cashfree-webhook', methods=['POST'])
-def cashfree_webhook():
+# Test endpoint
+@app.route('/test', methods=['GET'])
+def test():
     try:
-        # Verify webhook signature
-        signature = request.headers.get('x-webhook-signature', '')
-        body = request.get_data(as_text=True)
-        
-        expected_signature = hmac.new(
-            CASHFREE_WEBHOOK_SECRET.encode(),
-            msg=body.encode(),
-            digestmod=hashlib.sha256
-        ).hexdigest()
-        
-        if not hmac.compare_digest(signature, expected_signature):
-            return 'Invalid signature', 401
-        
-        # Process webhook data
-        data = request.json
-        event_type = data.get('event')
-        
-        if event_type == 'payment.success':
-            order_id = data.get('data', {}).get('order', {}).get('order_id')
-            amount = data.get('data', {}).get('order', {}).get('order_amount')
-            
-            # Find and update payment
-            conn = sqlite3.connect('ultimate_bot.db')
-            cursor = conn.cursor()
-            cursor.execute("UPDATE transactions SET status = 'approved' WHERE id = ?", (order_id,))
-            conn.commit()
-            conn.close()
-            
-            # Credit user's wallet
-            # This would need to be implemented based on your payment flow
-            
-        return 'ok', 200
+        # Test bot functionality
+        bot_info = bot.get_me()
+        return jsonify({
+            "status": "Bot is working!",
+            "bot_info": {
+                "id": bot_info.id,
+                "first_name": bot_info.first_name,
+                "username": bot_info.username
+            }
+        })
     except Exception as e:
-        logging.error(f"Webhook error: {e}")
-        return 'error', 500
+        return jsonify({"error": str(e)}), 500
 
-# Set webhook on startup
+# Set webhook endpoint
+@app.route('/set_webhook', methods=['GET'])
 def set_webhook():
     try:
-        # First, remove any existing webhook
+        logger.info("Setting webhook...")
         bot.remove_webhook()
-        
-        # Set the new webhook
-        bot.set_webhook(url=WEBHOOK_URL)
-        logging.info(f"✅ Webhook set to: {WEBHOOK_URL}")
-        
-        # Verify webhook was set correctly
-        webhook_info = bot.get_webhook_info()
-        if webhook_info.url == WEBHOOK_URL:
-            logging.info("✅ Webhook verification successful")
-        else:
-            logging.error(f"❌ Webhook verification failed. Expected: {WEBHOOK_URL}, Got: {webhook_info.url}")
+        result = bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Webhook set result: {result}")
+        return jsonify({"status": "Webhook set successfully", "url": WEBHOOK_URL})
     except Exception as e:
-        logging.error(f"❌ Webhook setup failed: {e}")
-
-# Reset webhook endpoint
-@app.route('/reset_webhook', methods=['GET'])
-def reset_webhook():
-    set_webhook()
-    return jsonify({"status": "Webhook reset successfully"})
+        logger.error(f"Webhook setup failed: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # Webhook info endpoint
 @app.route('/webhook_info', methods=['GET'])
@@ -937,24 +247,44 @@ def webhook_info():
 @app.route('/set_webhook_manual', methods=['GET'])
 def set_webhook_manual():
     try:
-        # Remove existing webhook
+        logger.info("Manual webhook setup...")
         bot.remove_webhook()
-        
-        # Set new webhook
         response = bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"Manual webhook set response: {response}")
         
         if response:
             return jsonify({"status": "Webhook set successfully", "url": WEBHOOK_URL})
         else:
             return jsonify({"status": "Failed to set webhook"}), 500
     except Exception as e:
+        logger.error(f"Manual webhook setup failed: {e}")
         return jsonify({"status": "Error", "error": str(e)}), 500
 
-# Test endpoint
-@app.route('/test', methods=['GET'])
-def test():
-    return jsonify({"status": "Bot is working!", "webhook_url": WEBHOOK_URL})
+# Test message endpoint
+@app.route('/send_test_message', methods=['GET'])
+def send_test_message():
+    try:
+        # Send a test message to admin
+        bot.send_message(ADMIN_ID, "🧪 Test message from bot")
+        return jsonify({"status": "Test message sent"})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == '__main__':
-    set_webhook()
+    # Set webhook on startup
+    try:
+        logger.info("Starting bot...")
+        bot.remove_webhook()
+        bot.set_webhook(url=WEBHOOK_URL)
+        logger.info(f"✅ Webhook set to: {WEBHOOK_URL}")
+        
+        # Send startup message to admin
+        try:
+            bot.send_message(ADMIN_ID, "🚀 Bot started successfully!")
+        except:
+            pass
+        
+    except Exception as e:
+        logger.error(f"❌ Webhook setup failed: {e}")
+    
     app.run(host='0.0.0.0', port=PORT)
