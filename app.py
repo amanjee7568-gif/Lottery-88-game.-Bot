@@ -918,6 +918,21 @@ def reset_webhook():
     set_webhook()
     return jsonify({"status": "Webhook reset successfully"})
 
+# Webhook info endpoint
+@app.route('/webhook_info', methods=['GET'])
+def webhook_info():
+    try:
+        webhook_info = bot.get_webhook_info()
+        return jsonify({
+            "url": webhook_info.url,
+            "has_custom_certificate": webhook_info.has_custom_certificate,
+            "pending_update_count": webhook_info.pending_update_count,
+            "last_error_date": webhook_info.last_error_date,
+            "last_error_message": webhook_info.last_error_message
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 if __name__ == '__main__':
     set_webhook()
     app.run(host='0.0.0.0', port=PORT)
