@@ -933,6 +933,28 @@ def webhook_info():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+# Manual webhook set endpoint
+@app.route('/set_webhook_manual', methods=['GET'])
+def set_webhook_manual():
+    try:
+        # Remove existing webhook
+        bot.remove_webhook()
+        
+        # Set new webhook
+        response = bot.set_webhook(url=WEBHOOK_URL)
+        
+        if response:
+            return jsonify({"status": "Webhook set successfully", "url": WEBHOOK_URL})
+        else:
+            return jsonify({"status": "Failed to set webhook"}), 500
+    except Exception as e:
+        return jsonify({"status": "Error", "error": str(e)}), 500
+
+# Test endpoint
+@app.route('/test', methods=['GET'])
+def test():
+    return jsonify({"status": "Bot is working!", "webhook_url": WEBHOOK_URL})
+
 if __name__ == '__main__':
     set_webhook()
     app.run(host='0.0.0.0', port=PORT)
